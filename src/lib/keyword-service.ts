@@ -144,12 +144,6 @@ export async function saveScrapingResult(
     },
   };
 
-  console.log('💾 스크래핑 결과 저장 중...', {
-    customerKeywordId,
-    measuredDate: today,
-    rank: insertData.exposure_rank,
-  });
-
   // INSERT: 매번 새로운 레코드 추가 (하루에 여러 번 기록 가능)
   const { error } = await supabase
     .from('keyword_ranking_history')
@@ -159,8 +153,6 @@ export async function saveScrapingResult(
     console.error('❌ 결과 저장 실패:', error.message);
     throw new Error(`결과 저장 실패: ${error.message}`);
   }
-
-  console.log('✅ 스크래핑 결과 저장 완료');
 }
 
 /**
@@ -302,8 +294,6 @@ export async function createScrapingLog(
     metadata: {},
   };
 
-  console.log('📝 스크래핑 로그 생성 중...');
-
   const { data, error } = await supabase
     .from('scraping_logs')
     .insert(insertData as any)
@@ -314,8 +304,6 @@ export async function createScrapingLog(
     console.error('❌ 로그 생성 실패:', error.message);
     throw new Error(`로그 생성 실패: ${error.message}`);
   }
-
-  console.log('✅ 스크래핑 로그 생성 완료:', data.id);
   return data.id;
 }
 
@@ -347,12 +335,6 @@ export async function updateScrapingLog(
     metadata: params.metadata || {},
   };
 
-  console.log('📝 스크래핑 로그 업데이트 중...', {
-    logId,
-    status: params.status,
-    executionTimeMs,
-  });
-
   const { error } = await supabase
     .from('scraping_logs')
     .update(updateData as any)
@@ -360,8 +342,6 @@ export async function updateScrapingLog(
 
   if (error) {
     console.error('❌ 로그 업데이트 실패:', error.message);
-  } else {
-    console.log('✅ 스크래핑 로그 업데이트 완료');
   }
 }
 

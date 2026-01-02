@@ -10,19 +10,12 @@ export async function scrapeNaverPlace(
   request: ScrapingRequest
 ): Promise<ScrapingResult> {
   const { keyword, placeId } = request;
-  
-  console.log('🚀 크롤링 시작');
-  console.log('  - 키워드:', keyword);
-  console.log('  - Place ID:', placeId);
-  console.log('  - 환경:', isLocalDev ? '로컬 개발' : 'CI/서버');
 
   let browser;
   let businessType = 'place';
 
   try {
     const puppeteer = await import('puppeteer');
-    
-    console.log('🌐 브라우저 실행 중...');
     
     browser = await puppeteer.default.launch({
       headless: !isLocalDev,  // CI에서는 headless, 로컬에서는 화면 표시
@@ -40,23 +33,29 @@ export async function scrapeNaverPlace(
 
     const page = await browser.newPage();
 
-    // 콘솔 로그 포워딩
+    // 콘솔 로그 포워딩 (중요 로그만 필터링)
     page.on('console', async (msg) => {
       try {
         const type = msg.type();
         const text = msg.text();
         
-        if (text.includes('JSHandle@')) {
-          const args = msg.args();
-          const values = await Promise.all(
-            args.map(arg => arg.jsonValue().catch(() => arg.toString()))
-          );
-          console.log(`PAGE ${type.toUpperCase()}:`, ...values);
-        } else {
-          console.log(`PAGE ${type.toUpperCase()}:`, text);
+        // 불필요한 로그 필터링
+        if (
+          text.includes('ncaptcha') ||
+          text.includes('NCaptcha') ||
+          text === '{}' ||
+          text.includes('JSHandle@') ||
+          type === 'debug'
+        ) {
+          return; // 무시
+        }
+        
+        // 중요 로그만 출력 (로컬 개발 시에만 상세 로그)
+        if (isLocalDev || text.includes('✅') || text.includes('🎯') || text.includes('타겟')) {
+          console.log(`  [페이지] ${text}`);
         }
       } catch (err) {
-        console.log('PAGE LOG (unserializable):', String(err));
+        // 무시
       }
     });
 
@@ -73,28 +72,24 @@ export async function scrapeNaverPlace(
 
     // 네이버 플레이스 검색
     const searchUrl = `https://m.place.naver.com/place/list?query=${encodeURIComponent(keyword)}&x=126.9783882&y=37.5666103&level=top`;
-    console.log('📍 네이버 플레이스 검색:', searchUrl);
 
     await page.goto(searchUrl, {
       waitUntil: 'domcontentloaded',
       timeout: 30000,
     });
 
-    console.log('⏳ 페이지 로딩 대기 중...');
     await new Promise(resolve => setTimeout(resolve, 1000));
     
     // 리스트 로드 대기
     try {
       await page.waitForSelector('ul > li a, a[href*="/restaurant/"]', { timeout: 5000 });
-      console.log('✅ 리스트 로드 완료');
     } catch (e) {
-      console.log('⚠️ 리스트 셀렉터 대기 타임아웃 (계속 진행)');
+      // 계속 진행
     }
     
     await new Promise(resolve => setTimeout(resolve, 500));
 
     // 점진적 스크롤 및 순위 확인 (100개 단위로 확인)
-    console.log('🔍 점진적 스크롤 및 순위 확인 시작...');
     
     const rankingData = await page.evaluate(async (targetPlaceId, detectedType) => {
       const scrollContainer = document.querySelector('.YluNG');
@@ -413,13 +408,10 @@ export async function scrapeNaverPlace(
       timestamp: new Date().toISOString(),
     };
 
-    console.log('🎉 크롤링 완료!');
-    console.log(JSON.stringify(result, null, 2));
-
     return result;
 
   } catch (error: any) {
-    console.error('❌ 크롤링 에러:', error);
+    console.error('❌ 크롤링 에러:', error.message);
 
     if (browser) {
       await browser.close();
