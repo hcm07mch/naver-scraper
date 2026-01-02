@@ -1,0 +1,28 @@
+{
+  "name": "naver-scraper",
+  "version": "1.0.0",
+  "description": "Naver Place scraping with GitHub Actions",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "scrape": "npm run build && node dist/index.js",
+    "test": "ts-node src/test-local.ts"
+  },
+  "keywords": [
+    "scraping",
+    "naver",
+    "puppeteer"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.89.0",
+    "dotenv": "^17.2.3",
+    "puppeteer": "^24.34.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.2"
+  }
+}

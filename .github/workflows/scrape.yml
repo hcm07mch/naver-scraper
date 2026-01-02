@@ -1,0 +1,30 @@
+name: Daily Scraping
+
+on:
+  schedule:
+    # 매일 오후 2시 KST (UTC 05:00)
+    - cron: '0 5 * * *'
+  workflow_dispatch: # 수동 실행 가능
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run scraping
+        run: npm run scrape
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}

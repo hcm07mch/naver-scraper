@@ -1,0 +1,13 @@
+node_modules/
+dist/
+lambda.zip
+chromium-layer.zip
+layer/nodejs/node_modules/
+*.log
+.env
+.DS_Store
+.vscode/
+*.js
+*.d.ts
+*.map
+!scripts/*.js

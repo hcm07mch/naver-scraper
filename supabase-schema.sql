@@ -1,0 +1,158 @@
+-- ============================================
+-- Supabase 테이블 스키마 (참고용)
+-- 이미 Supabase에 테이블이 생성되어 있으므로 실행 불필요
+-- ============================================
+
+-- ============================================
+-- 1. customers 테이블 (고객/업체 정보)
+-- ============================================
+-- create table public.customers (
+--   id uuid not null default gen_random_uuid (),
+--   user_id uuid not null,
+--   client_name text not null,
+--   place_id text null,
+--   place_url text null,
+--   contact text null,
+--   extra_fields jsonb null default '{}'::jsonb,
+--   created_at timestamp with time zone null default now(),
+--   updated_at timestamp with time zone null default now(),
+--   business_type text not null default 'place'::text,
+--   constraint customers_pkey primary key (id),
+--   constraint customers_business_type_fkey foreign KEY (business_type) references business_types (type_code),
+--   constraint customers_user_id_fkey foreign KEY (user_id) references auth.users (id) on delete CASCADE
+-- );
+
+-- ============================================
+-- 2. customer_keywords 테이블 (고객별 키워드)
+-- ============================================
+-- create table public.customer_keywords (
+--   id uuid not null default gen_random_uuid (),
+--   customer_id uuid not null,
+--   keyword text not null,
+--   created_at timestamp with time zone null default now(),
+--   is_active boolean null default true,
+--   updated_at timestamp with time zone null default now(),
+--   deleted_at timestamp with time zone null,
+--   constraint customer_keywords_pkey primary key (id),
+--   constraint customer_keywords_customer_id_fkey foreign KEY (customer_id) references customers (id) on delete CASCADE
+-- );
+
+-- ============================================
+-- 3. keyword_ranking_history 테이블 (순위 이력)
+-- ============================================
+-- create table public.keyword_ranking_history (
+--   id uuid not null default gen_random_uuid (),
+--   customer_keyword_id uuid not null,
+--   measured_date date not null,
+--   exposure_rank integer null,
+--   visitor_review_count integer null default 0,
+--   blog_review_count integer null default 0,
+--   metadata jsonb null default '{}'::jsonb,
+--   created_at timestamp with time zone null default now(),
+--   updated_at timestamp with time zone null default now(),
+--   constraint keyword_ranking_history_pkey primary key (id),
+--   constraint unique_keyword_date unique (customer_keyword_id, measured_date),
+--   constraint keyword_ranking_history_customer_keyword_id_fkey foreign KEY (customer_keyword_id) references customer_keywords (id) on delete CASCADE
+-- );
+
+-- ============================================
+-- 4. customer_keywords_with_latest_ranking 뷰
+-- ============================================
+-- create view public.customer_keywords_with_latest_ranking as
+-- select
+--   ck.id,
+--   ck.customer_id,
+--   ck.keyword,
+--   ck.is_active,
+--   ck.created_at,
+--   ck.updated_at,
+--   ck.deleted_at,
+--   c.client_name,
+--   c.place_id,
+--   c.place_url,
+--   c.user_id,
+--   (
+--     select jsonb_build_object(
+--       'measured_date', krh.measured_date,
+--       'exposure_rank', krh.exposure_rank,
+--       'visitor_review_count', krh.visitor_review_count,
+--       'blog_review_count', krh.blog_review_count
+--     )
+--     from keyword_ranking_history krh
+--     where krh.customer_keyword_id = ck.id
+--     order by krh.measured_date desc
+--     limit 1
+--   ) as latest_ranking
+-- from customer_keywords ck
+-- join customers c on c.id = ck.customer_id
+-- where ck.deleted_at is null;
+
+-- ============================================
+-- 데이터 흐름 설명
+-- ============================================
+-- 
+-- 1. customers: 업체 정보 (place_id 포함)
+--    └── customer_keywords: 업체별 모니터링 키워드 (1:N)
+--        └── keyword_ranking_history: 키워드별 일별 순위 이력 (1:N)
+--
+-- Lambda 스크래핑 흐름:
+-- 1) customer_keywords + customers 조인하여 활성 키워드 조회
+-- 2) 각 키워드에 대해 네이버 플레이스 검색
+-- 3) 결과를 keyword_ranking_history에 INSERT
+--    (하루에 여러 번 실행 가능, 매번 새 레코드 생성)
+
+-- ============================================
+-- 유용한 쿼리 예시
+-- ============================================
+
+-- 최근 7일간 순위 변동 조회
+-- SELECT 
+--   c.client_name,
+--   ck.keyword,
+--   krh.measured_date,
+--   krh.exposure_rank,
+--   krh.visitor_review_count,
+--   krh.blog_review_count
+-- FROM keyword_ranking_history krh
+-- JOIN customer_keywords ck ON krh.customer_keyword_id = ck.id
+-- JOIN customers c ON ck.customer_id = c.id
+-- WHERE krh.measured_date >= CURRENT_DATE - INTERVAL '7 days'
+-- ORDER BY c.client_name, ck.keyword, krh.measured_date DESC;
+
+-- 일별 평균 순위 조회
+-- SELECT 
+--   measured_date,
+--   AVG(exposure_rank) as avg_rank,
+--   MIN(exposure_rank) as best_rank,
+--   MAX(exposure_rank) as worst_rank,
+--   COUNT(*) as keyword_count
+-- FROM keyword_ranking_history
+-- WHERE exposure_rank IS NOT NULL
+-- GROUP BY measured_date
+-- ORDER BY measured_date DESC;
+
+-- 순위 상승/하락 알림용 쿼리
+-- WITH ranked AS (
+--   SELECT 
+--     customer_keyword_id,
+--     measured_date,
+--     exposure_rank,
+--     LAG(exposure_rank) OVER (
+--       PARTITION BY customer_keyword_id 
+--       ORDER BY measured_date
+--     ) as prev_rank
+--   FROM keyword_ranking_history
+-- )
+-- SELECT 
+--   c.client_name,
+--   ck.keyword,
+--   r.measured_date,
+--   r.prev_rank as yesterday_rank,
+--   r.exposure_rank as today_rank,
+--   r.prev_rank - r.exposure_rank as rank_change
+-- FROM ranked r
+-- JOIN customer_keywords ck ON r.customer_keyword_id = ck.id
+-- JOIN customers c ON ck.customer_id = c.id
+-- WHERE r.measured_date = CURRENT_DATE
+--   AND r.prev_rank IS NOT NULL
+--   AND ABS(r.prev_rank - r.exposure_rank) >= 5;
