@@ -13,11 +13,15 @@ import { ScrapingResult } from './types';
 /**
  * 활성화된 모든 키워드 조회 (customers + customer_keywords 조인)
  * place_id가 있는 고객의 활성 키워드만 조회
+ * 오늘 이미 스크래핑된 키워드는 제외
  */
 export async function getActiveKeywords(): Promise<ScrapingTarget[]> {
   const supabase = getSupabaseClient();
   
   console.log('📋 활성 키워드 조회 중...');
+  
+  // 오늘 날짜 (YYYY-MM-DD)
+  const today = new Date().toISOString().split('T')[0];
   
   // customer_keywords와 customers 조인 쿼리
   const { data, error } = await supabase
@@ -44,7 +48,7 @@ export async function getActiveKeywords(): Promise<ScrapingTarget[]> {
   }
 
   // 결과를 ScrapingTarget 형태로 변환
-  const targets: ScrapingTarget[] = (data || []).map((item: any) => ({
+  const allTargets: ScrapingTarget[] = (data || []).map((item: any) => ({
     keywordId: item.id,
     customerId: item.customer_id,
     keyword: item.keyword,
@@ -53,7 +57,36 @@ export async function getActiveKeywords(): Promise<ScrapingTarget[]> {
     businessType: item.customers.business_type,
   }));
 
-  console.log(`✅ ${targets.length}개의 활성 키워드 조회 완료`);
+  console.log(`📊 전체 활성 키워드: ${allTargets.length}개`);
+  
+  // 오늘 이미 스크래핑된 키워드 ID 조회
+  const keywordIds = allTargets.map(t => t.keywordId);
+  
+  if (keywordIds.length === 0) {
+    return [];
+  }
+  
+  const { data: todayRecords, error: historyError } = await supabase
+    .from('keyword_ranking_history')
+    .select('customer_keyword_id')
+    .in('customer_keyword_id', keywordIds)
+    .eq('measured_date', today);
+
+  if (historyError) {
+    console.error('⚠️ 오늘 스크래핑 이력 조회 실패:', historyError.message);
+    // 이력 조회 실패 시에도 전체 키워드 반환 (안전하게)
+    return allTargets;
+  }
+
+  // 오늘 이미 스크래핑된 키워드 ID Set
+  const alreadyScrapedIds = new Set(
+    (todayRecords || []).map((r: any) => r.customer_keyword_id)
+  );
+
+  // 오늘 스크래핑되지 않은 키워드만 필터링
+  const targets = allTargets.filter(t => !alreadyScrapedIds.has(t.keywordId));
+
+  console.log(`✅ 오늘 스크래핑 필요한 키워드: ${targets.length}개 (이미 완료: ${alreadyScrapedIds.size}개)`);
   return targets;
 }
 
@@ -113,6 +146,7 @@ export interface ScrapingContext {
 
 /**
  * 스크래핑 결과를 keyword_ranking_history에 저장
+ * 같은 날짜에 이미 데이터가 있으면 저장하지 않음 (중복 방지)
  */
 export async function saveScrapingResult(
   customerKeywordId: string,
@@ -123,6 +157,22 @@ export async function saveScrapingResult(
   
   // 오늘 날짜 (YYYY-MM-DD)
   const today = new Date().toISOString().split('T')[0];
+  
+  // 오늘 이미 저장된 데이터가 있는지 확인
+  const { data: existingData, error: checkError } = await supabase
+    .from('keyword_ranking_history')
+    .select('id')
+    .eq('customer_keyword_id', customerKeywordId)
+    .eq('measured_date', today)
+    .limit(1);
+
+  if (checkError) {
+    console.error('⚠️ 중복 체크 실패:', checkError.message);
+    // 체크 실패 시에도 계속 진행 (안전하게)
+  } else if (existingData && existingData.length > 0) {
+    console.log(`⏭️ 이미 오늘(${today}) 데이터가 있어 저장 건너뜀: ${context?.keyword || customerKeywordId}`);
+    return;
+  }
   
   const insertData: KeywordRankingHistoryInsert = {
     customer_keyword_id: customerKeywordId,
@@ -144,7 +194,7 @@ export async function saveScrapingResult(
     },
   };
 
-  // INSERT: 매번 새로운 레코드 추가 (하루에 여러 번 기록 가능)
+  // INSERT: 오늘 데이터가 없을 때만 저장
   const { error } = await supabase
     .from('keyword_ranking_history')
     .insert(insertData as any);
@@ -157,6 +207,7 @@ export async function saveScrapingResult(
 
 /**
  * 여러 스크래핑 결과 일괄 저장
+ * 같은 날짜에 이미 데이터가 있는 키워드는 제외하고 저장
  */
 export async function saveScrapingResults(
   results: Array<{
@@ -164,11 +215,41 @@ export async function saveScrapingResults(
     result: ScrapingResult;
     context?: ScrapingContext;
   }>
-): Promise<{ success: number; failed: number }> {
+): Promise<{ success: number; failed: number; skipped: number }> {
   const supabase = getSupabaseClient();
   const today = new Date().toISOString().split('T')[0];
   
-  const insertData: KeywordRankingHistoryInsert[] = results.map(({ customerKeywordId, result, context }) => ({
+  // 오늘 이미 저장된 키워드 ID 조회
+  const keywordIds = results.map(r => r.customerKeywordId);
+  const { data: existingRecords, error: checkError } = await supabase
+    .from('keyword_ranking_history')
+    .select('customer_keyword_id')
+    .in('customer_keyword_id', keywordIds)
+    .eq('measured_date', today);
+
+  if (checkError) {
+    console.error('⚠️ 중복 체크 실패:', checkError.message);
+  }
+
+  // 이미 저장된 키워드 ID Set
+  const alreadySavedIds = new Set(
+    (existingRecords || []).map((r: any) => r.customer_keyword_id)
+  );
+
+  // 저장이 필요한 결과만 필터링
+  const resultsToSave = results.filter(r => !alreadySavedIds.has(r.customerKeywordId));
+  const skippedCount = results.length - resultsToSave.length;
+
+  if (skippedCount > 0) {
+    console.log(`⏭️ 이미 오늘 데이터가 있어 ${skippedCount}개 건너뜀`);
+  }
+
+  if (resultsToSave.length === 0) {
+    console.log('💡 저장할 새로운 데이터가 없습니다.');
+    return { success: 0, failed: 0, skipped: skippedCount };
+  }
+  
+  const insertData: KeywordRankingHistoryInsert[] = resultsToSave.map(({ customerKeywordId, result, context }) => ({
     customer_keyword_id: customerKeywordId,
     measured_date: today,
     exposure_rank: result.rank || null,
@@ -190,18 +271,18 @@ export async function saveScrapingResults(
 
   console.log(`💾 ${insertData.length}개의 스크래핑 결과 일괄 저장 중...`);
 
-  // INSERT: 매번 새로운 레코드 추가
+  // INSERT: 오늘 데이터가 없는 것만 저장
   const { error } = await supabase
     .from('keyword_ranking_history')
     .insert(insertData as any);
 
   if (error) {
     console.error('❌ 일괄 저장 실패:', error.message);
-    return { success: 0, failed: results.length };
+    return { success: 0, failed: resultsToSave.length, skipped: skippedCount };
   }
 
   console.log(`✅ ${insertData.length}개의 결과 저장 완료`);
-  return { success: results.length, failed: 0 };
+  return { success: resultsToSave.length, failed: 0, skipped: skippedCount };
 }
 
 /**
