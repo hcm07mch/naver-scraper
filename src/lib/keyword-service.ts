@@ -6,14 +6,16 @@ import { getSupabaseClient } from './supabase';
 import { 
   ScrapingTarget, 
   KeywordRankingHistoryInsert,
-  CustomerKeywordWithLatestRanking 
+  KeywordAnalysisSnapshotInsert,
+  CustomerKeywordWithLatestRanking,
+  RankingItemJson
 } from './database.types';
-import { ScrapingResult } from './types';
+import { ScrapingResult, FullRankingResult, RankingItem } from './types';
 
 /**
  * 활성화된 모든 키워드 조회 (customers + customer_keywords 조인)
  * place_id가 있는 고객의 활성 키워드만 조회
- * 오늘 이미 스크래핑된 키워드는 제외
+ * 오늘 이미 스크래핑된 customer_keyword_id는 제외
  */
 export async function getActiveKeywords(): Promise<ScrapingTarget[]> {
   const supabase = getSupabaseClient();
@@ -34,7 +36,8 @@ export async function getActiveKeywords(): Promise<ScrapingTarget[]> {
         id,
         client_name,
         place_id,
-        business_type
+        business_type,
+        user_id
       )
     `)
     .eq('is_active', true)
@@ -55,11 +58,12 @@ export async function getActiveKeywords(): Promise<ScrapingTarget[]> {
     placeId: item.customers.place_id,
     clientName: item.customers.client_name,
     businessType: item.customers.business_type,
+    userId: item.customers.user_id,
   }));
 
   console.log(`📊 전체 활성 키워드: ${allTargets.length}개`);
   
-  // 오늘 이미 스크래핑된 키워드 ID 조회
+  // 오늘 이미 스크래핑된 키워드 ID 조회 (keyword_analysis_snapshots에서)
   const keywordIds = allTargets.map(t => t.keywordId);
   
   if (keywordIds.length === 0) {
@@ -67,7 +71,7 @@ export async function getActiveKeywords(): Promise<ScrapingTarget[]> {
   }
   
   const { data: todayRecords, error: historyError } = await supabase
-    .from('keyword_ranking_history')
+    .from('keyword_analysis_snapshots')
     .select('customer_keyword_id')
     .in('customer_keyword_id', keywordIds)
     .eq('measured_date', today);
@@ -88,6 +92,55 @@ export async function getActiveKeywords(): Promise<ScrapingTarget[]> {
 
   console.log(`✅ 오늘 스크래핑 필요한 키워드: ${targets.length}개 (이미 완료: ${alreadyScrapedIds.size}개)`);
   return targets;
+}
+
+/**
+ * 오늘 이미 스크래핑된 키워드의 rankings 데이터 조회 (키워드 텍스트 기준)
+ * 다른 유저가 같은 키워드를 스크래핑했으면 재사용 가능
+ */
+export async function getTodaySnapshotByKeyword(keyword: string): Promise<FullRankingResult | null> {
+  const supabase = getSupabaseClient();
+  const today = new Date().toISOString().split('T')[0];
+  
+  // 키워드 텍스트로 오늘 스크래핑된 스냅샷 조회 (가장 최근 것)
+  const { data, error } = await supabase
+    .from('keyword_analysis_snapshots')
+    .select('*')
+    .ilike('keyword', keyword)  // 대소문자 무시
+    .eq('measured_date', today)
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  if (error) {
+    console.error('⚠️ 오늘 스냅샷 조회 실패:', error.message);
+    return null;
+  }
+
+  if (!data || data.length === 0) {
+    return null;
+  }
+
+  const snapshot = data[0];
+  
+  // DB 데이터를 FullRankingResult로 변환
+  const rankings: RankingItem[] = (snapshot.rankings || []).map((r: RankingItemJson) => ({
+    rank: r.rank,
+    place_id: r.place_id,
+    name: r.name,
+    visitor_review_count: r.visitor_review_count,
+    blog_review_count: r.blog_review_count,
+    category: r.category,
+    href: r.href,
+  }));
+
+  return {
+    success: true,
+    keyword: snapshot.keyword,
+    measuredDate: snapshot.measured_date,
+    totalResults: snapshot.total_results,
+    rankings,
+    timestamp: snapshot.created_at,
+  };
 }
 
 /**
@@ -202,6 +255,102 @@ export async function saveScrapingResult(
   if (error) {
     console.error('❌ 결과 저장 실패:', error.message);
     throw new Error(`결과 저장 실패: ${error.message}`);
+  }
+}
+
+/**
+ * 전체 순위 스냅샷을 keyword_analysis_snapshots에 저장
+ * 같은 날짜에 이미 데이터가 있으면 업데이트
+ */
+export async function saveAnalysisSnapshot(
+  target: ScrapingTarget,
+  result: FullRankingResult
+): Promise<void> {
+  const supabase = getSupabaseClient();
+  
+  if (!target.userId) {
+    console.error('❌ userId가 없어서 스냅샷 저장 불가');
+    return;
+  }
+
+  const today = result.measuredDate;
+  
+  // rankings를 JSONB 형식으로 변환
+  const rankingsJson: RankingItemJson[] = result.rankings.map(r => ({
+    rank: r.rank,
+    place_id: r.place_id,
+    name: r.name,
+    visitor_review_count: r.visitor_review_count,
+    blog_review_count: r.blog_review_count,
+    category: r.category,
+    href: r.href,
+  }));
+
+  // 오늘 이미 저장된 데이터가 있는지 확인
+  const { data: existingData, error: checkError } = await supabase
+    .from('keyword_analysis_snapshots')
+    .select('id')
+    .eq('customer_keyword_id', target.keywordId)
+    .eq('measured_date', today)
+    .limit(1);
+
+  if (checkError) {
+    console.error('⚠️ 중복 체크 실패:', checkError.message);
+  }
+
+  const metadata = {
+    client_name: target.clientName,
+    customer_id: target.customerId,
+    place_id: target.placeId,
+    business_type: target.businessType,
+    target_rank: result.targetPlaceRank || null,
+    target_review_count: result.targetPlaceReviewCount || null,
+    target_blog_count: result.targetPlaceBlogCount || null,
+    success: result.success,
+    error: result.error || null,
+    scraped_at: result.timestamp,
+  };
+
+  if (existingData && existingData.length > 0) {
+    // UPDATE: 기존 데이터 업데이트
+    const { error } = await supabase
+      .from('keyword_analysis_snapshots')
+      .update({
+        total_results: result.totalResults,
+        rankings: rankingsJson,
+        metadata,
+        updated_at: new Date().toISOString(),
+      } as any)
+      .eq('id', existingData[0].id);
+
+    if (error) {
+      console.error('❌ 스냅샷 업데이트 실패:', error.message);
+      throw new Error(`스냅샷 업데이트 실패: ${error.message}`);
+    }
+    
+    console.log(`🔄 스냅샷 업데이트 완료: ${target.keyword}`);
+  } else {
+    // INSERT: 새 데이터 삽입
+    const insertData: KeywordAnalysisSnapshotInsert = {
+      user_id: target.userId,
+      customer_keyword_id: target.keywordId,
+      keyword: target.keyword,
+      measured_date: today,
+      total_results: result.totalResults,
+      rankings: rankingsJson,
+      metadata,
+    };
+
+    const { error } = await supabase
+      .from('keyword_analysis_snapshots')
+      .insert(insertData as any);
+
+    if (error) {
+      console.error('❌ 스냅샷 저장 실패:', error.message);
+      throw new Error(`스냅샷 저장 실패: ${error.message}`);
+    }
+    
+    console.log(`💾 스냅샷 저장 완료: ${target.keyword} (${result.totalResults}개 업체)`);
   }
 }
 

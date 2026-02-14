@@ -1,13 +1,15 @@
 import 'dotenv/config';
-import { scrapeNaverPlace } from './lib/scraper';
+import { scrapeKeywordRankings } from './lib/scraper';
 import { 
   getActiveKeywords, 
-  saveScrapingResult, 
+  saveAnalysisSnapshot, 
   updateKeywordTimestamp,
   createScrapingLog,
-  updateScrapingLog 
+  updateScrapingLog,
+  getTodaySnapshotByKeyword
 } from './lib/keyword-service';
 import { ScrapingTarget } from './lib/database.types';
+import { FullRankingResult } from './lib/types';
 
 // 병렬 처리 설정
 const CONCURRENCY_LIMIT = 3; // 동시에 실행할 크롬 인스턴스 수
@@ -24,105 +26,166 @@ function chunkArray<T>(array: T[], chunkSize: number): T[][] {
 }
 
 /**
- * 단일 키워드 스크래핑 처리
+ * 키워드별로 타겟 그룹화
+ * 동일 키워드는 1회만 스크래핑하기 위함
  */
-async function processTarget(target: ScrapingTarget): Promise<{
-  target: ScrapingTarget;
-  success: boolean;
-  result?: any;
-  error?: string;
-}> {
-  console.log(`🔍 처리 시작: "${target.keyword}" - ${target.clientName}`);
+function groupByKeyword(targets: ScrapingTarget[]): Map<string, ScrapingTarget[]> {
+  const groups = new Map<string, ScrapingTarget[]>();
   
+  for (const target of targets) {
+    const keyword = target.keyword.toLowerCase().trim();
+    const existing = groups.get(keyword) || [];
+    existing.push(target);
+    groups.set(keyword, existing);
+  }
+  
+  return groups;
+}
+
+/**
+ * 키워드 그룹 처리 (스냅샷 재사용 또는 새 스크래핑)
+ * 다른 유저가 오늘 이미 스크래핑했으면 해당 데이터 재사용
+ */
+async function processKeywordGroup(
+  keyword: string,
+  targets: ScrapingTarget[]
+): Promise<{
+  keyword: string;
+  success: boolean;
+  savedCount: number;
+  failedCount: number;
+  reused: boolean;  // 기존 스냅샷 재사용 여부
+  results: any[];
+}> {
+  console.log(`🔍 키워드 "${keyword}" 처리 시작 (${targets.length}개 업체)`);
+  
+  const results: any[] = [];
+  let savedCount = 0;
+  let failedCount = 0;
+  let reused = false;
+
   try {
-    // 스크래핑 실행
-    const scrapingResult = await scrapeNaverPlace({
-      keyword: target.keyword,
-      placeId: target.placeId,
-    });
+    // 1단계: 다른 유저가 오늘 이미 스크래핑했는지 확인
+    let scrapingResult = await getTodaySnapshotByKeyword(keyword);
+    
+    if (scrapingResult) {
+      console.log(`♻️ "${keyword}" 기존 스냅샷 재사용 (${scrapingResult.totalResults}개 업체)`);
+      reused = true;
+    } else {
+      // 2단계: 없으면 새로 스크래핑
+      console.log(`🌐 "${keyword}" 새로 스크래핑 시작...`);
+      scrapingResult = await scrapeKeywordRankings(keyword, targets[0].placeId);
+      
+      if (!scrapingResult.success) {
+        console.error(`❌ "${keyword}" 스크래핑 실패: ${scrapingResult.error}`);
+        
+        // 모든 타겟에 에러 기록
+        for (const target of targets) {
+          try {
+            await saveAnalysisSnapshot(target, scrapingResult);
+          } catch (e) {
+            console.error(`⚠️ 에러 스냅샷 저장 실패: ${target.clientName}`);
+          }
+          failedCount++;
+          results.push({
+            keywordId: target.keywordId,
+            keyword: target.keyword,
+            clientName: target.clientName,
+            success: false,
+            error: scrapingResult.error,
+          });
+        }
+        
+        return { keyword, success: false, savedCount, failedCount, reused, results };
+      }
 
-    // 결과를 keyword_ranking_history에 저장
-    await saveScrapingResult(target.keywordId, scrapingResult, {
-      keyword: target.keyword,
-      placeId: target.placeId,
-      clientName: target.clientName,
-      customerId: target.customerId,
-      businessType: target.businessType,
-    });
+      console.log(`📊 "${keyword}" 스크래핑 완료 - ${scrapingResult.totalResults}개 업체 수집`);
+    }
 
-    // 키워드 업데이트 시간 갱신
-    await updateKeywordTimestamp(target.keywordId);
+    // 3단계: 각 타겟별로 저장 (rankings에서 해당 업체 순위 추출)
+    for (const target of targets) {
+      try {
+        // rankings에서 해당 타겟의 place_id 찾기
+        const targetRanking = scrapingResult.rankings.find(
+          r => r.place_id === target.placeId
+        );
 
-    console.log(`✅ "${target.keyword}" 완료 - 순위: ${scrapingResult.rank || '순위권 밖'}`);
+        // 타겟별 맞춤 결과 생성
+        const targetResult: FullRankingResult = {
+          ...scrapingResult,
+          targetPlaceRank: targetRanking?.rank,
+          targetPlaceReviewCount: targetRanking?.visitor_review_count,
+          targetPlaceBlogCount: targetRanking?.blog_review_count,
+        };
 
-    return {
-      target,
-      success: true,
-      result: {
-        keywordId: target.keywordId,
-        customerId: target.customerId,
-        clientName: target.clientName,
-        keyword: target.keyword,
-        placeId: target.placeId,
-        success: scrapingResult.success,
-        rank: scrapingResult.rank,
-        reviewCount: scrapingResult.reviewCount,
-        blogCount: scrapingResult.blogCount,
-      },
-    };
+        await saveAnalysisSnapshot(target, targetResult);
+        await updateKeywordTimestamp(target.keywordId);
+
+        const rankInfo = targetRanking ? `${targetRanking.rank}위` : '순위권 밖';
+        const reuseTag = reused ? ' (재사용)' : '';
+        console.log(`  ✅ ${target.clientName}: ${rankInfo}${reuseTag}`);
+
+        savedCount++;
+        results.push({
+          keywordId: target.keywordId,
+          keyword: target.keyword,
+          clientName: target.clientName,
+          placeId: target.placeId,
+          success: true,
+          rank: targetRanking?.rank,
+          totalResults: scrapingResult.totalResults,
+          reused,
+        });
+
+      } catch (error: any) {
+        console.error(`  ❌ ${target.clientName} 저장 실패: ${error.message}`);
+        failedCount++;
+        results.push({
+          keywordId: target.keywordId,
+          keyword: target.keyword,
+          clientName: target.clientName,
+          success: false,
+          error: error.message,
+        });
+      }
+    }
+
+    return { keyword, success: true, savedCount, failedCount, reused, results };
 
   } catch (error: any) {
-    console.error(`❌ "${target.keyword}" 실패:`, error.message);
+    console.error(`❌ 키워드 "${keyword}" 처리 중 오류:`, error.message);
     
-    // 에러가 발생해도 결과 기록
-    await saveScrapingResult(target.keywordId, {
-      success: false,
-      keyword: target.keyword,
-      placeId: target.placeId,
-      timestamp: new Date().toISOString(),
-      error: error.message,
-    }, {
-      keyword: target.keyword,
-      placeId: target.placeId,
-      clientName: target.clientName,
-      customerId: target.customerId,
-      businessType: target.businessType,
-    });
-
-    return {
-      target,
-      success: false,
-      error: error.message,
-      result: {
-        keywordId: target.keywordId,
-        customerId: target.customerId,
-        clientName: target.clientName,
-        keyword: target.keyword,
-        placeId: target.placeId,
-        success: false,
-        error: error.message,
-      },
+    return { 
+      keyword, 
+      success: false, 
+      savedCount, 
+      failedCount: targets.length,
+      reused,
+      results 
     };
   }
 }
 
 /**
- * 배치 스크래핑 실행 (병렬 처리)
+ * 배치 스크래핑 실행 (키워드 중복 최적화 + 스냅샷 재사용)
  * GitHub Actions에서 정기적으로 호출
- * Supabase에 등록된 모든 활성 키워드에 대해 스크래핑 수행
+ * - 같은 배치 내 동일 키워드: 1회만 스크래핑
+ * - 다른 유저가 오늘 이미 스크래핑한 키워드: 기존 스냅샷 재사용
  */
 async function runBatchScraping(): Promise<{ success: boolean; processed: number; failed: number; logId?: string; results: any[] }> {
-  console.log('🚀 배치 스크래핑 시작 (병렬 처리)');
+  console.log('🚀 배치 스크래핑 시작 (크로스-유저 최적화)');
   console.log(`⚡ 동시 처리 수: ${CONCURRENCY_LIMIT}개`);
 
   const startTime = Date.now();
   const results: any[] = [];
   let processed = 0;
   let failed = 0;
+  let reusedCount = 0;  // 재사용된 스냅샷 수
+  let scrapedCount = 0; // 새로 스크래핑한 키워드 수
   let logId: string | undefined;
 
   try {
-    // 1. Supabase에서 활성 키워드 조회 (customers + customer_keywords 조인)
+    // 1. Supabase에서 활성 키워드 조회
     const targets: ScrapingTarget[] = await getActiveKeywords();
     
     if (targets.length === 0) {
@@ -130,59 +193,77 @@ async function runBatchScraping(): Promise<{ success: boolean; processed: number
       return { success: true, processed: 0, failed: 0, results: [] };
     }
 
-    console.log(`📋 ${targets.length}개의 키워드 처리 예정`);
+    // 2. 키워드별로 그룹화
+    const keywordGroups = groupByKeyword(targets);
+    const uniqueKeywords = Array.from(keywordGroups.keys());
+    
+    console.log(`📋 전체 타겟: ${targets.length}개`);
+    console.log(`🔑 고유 키워드: ${uniqueKeywords.length}개 (중복 제거: ${targets.length - uniqueKeywords.length}개)`);
 
-    // 2. 스크래핑 로그 생성
+    // 3. 스크래핑 로그 생성
     try {
       logId = await createScrapingLog(targets.length, 'scheduled');
     } catch (logError) {
       console.warn('⚠️ 로그 생성 실패 (계속 진행):', logError);
     }
 
-    // 3. 청크 단위로 병렬 처리
-    const chunks = chunkArray(targets, CONCURRENCY_LIMIT);
-    console.log(`📦 ${chunks.length}개의 청크로 분할 (청크당 최대 ${CONCURRENCY_LIMIT}개)`);
+    // 4. 키워드 그룹 단위로 청크 분할 및 병렬 처리
+    const keywordChunks = chunkArray(uniqueKeywords, CONCURRENCY_LIMIT);
+    console.log(`📦 ${keywordChunks.length}개의 청크로 분할 (청크당 최대 ${CONCURRENCY_LIMIT}개 키워드)`);
 
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i];
-      console.log(`\n🔄 청크 ${i + 1}/${chunks.length} 처리 중... (${chunk.length}개 키워드)`);
+    for (let i = 0; i < keywordChunks.length; i++) {
+      const chunk = keywordChunks[i];
+      console.log(`\n🔄 청크 ${i + 1}/${keywordChunks.length} 처리 중... (${chunk.length}개 키워드)`);
 
-      // 청크 내 모든 키워드 병렬 처리
+      // 청크 내 키워드 그룹 병렬 처리
       const chunkResults = await Promise.all(
-        chunk.map(target => processTarget(target))
+        chunk.map(keyword => {
+          const groupTargets = keywordGroups.get(keyword) || [];
+          return processKeywordGroup(keyword, groupTargets);
+        })
       );
 
       // 결과 집계
-      for (const result of chunkResults) {
-        results.push(result.result);
-        if (result.success) {
-          processed++;
-        } else {
-          failed++;
+      for (const groupResult of chunkResults) {
+        results.push(...groupResult.results);
+        processed += groupResult.savedCount;
+        failed += groupResult.failedCount;
+        if (groupResult.reused) {
+          reusedCount++;
+        } else if (groupResult.success) {
+          scrapedCount++;
         }
       }
 
       console.log(`✅ 청크 ${i + 1} 완료 (누적: 성공 ${processed}, 실패 ${failed})`);
 
-      // 청크 간 딜레이 (네이버 차단 방지)
-      if (i < chunks.length - 1) {
+      // 청크 간 딜레이 (새로 스크래핑한 경우에만)
+      const hasNewScraping = chunkResults.some(r => !r.reused && r.success);
+      if (i < keywordChunks.length - 1 && hasNewScraping) {
         console.log('⏳ 다음 청크까지 3초 대기...');
         await new Promise(resolve => setTimeout(resolve, 3000));
       }
     }
 
     const executionTime = Date.now() - startTime;
-    console.log(`\n🎉 배치 처리 완료: 성공 ${processed}개, 실패 ${failed}개`);
+    console.log(`\n🎉 배치 처리 완료`);
+    console.log(`   - 새 스크래핑: ${scrapedCount}개 키워드`);
+    console.log(`   - 스냅샷 재사용: ${reusedCount}개 키워드 ♻️`);
+    console.log(`   - 저장: 성공 ${processed}개, 실패 ${failed}개`);
     console.log(`⏱️ 총 실행 시간: ${(executionTime / 1000).toFixed(1)}초`);
 
-    // 4. 스크래핑 로그 업데이트 (성공)
+    // 5. 스크래핑 로그 업데이트 (성공)
     if (logId) {
       await updateScrapingLog(logId, {
         processedCount: processed,
         failedCount: failed,
         status: 'completed',
         metadata: {
-          resultsCount: results.length,
+          totalTargets: targets.length,
+          uniqueKeywords: uniqueKeywords.length,
+          newlyScraped: scrapedCount,
+          snapshotsReused: reusedCount,
+          duplicatesSkipped: targets.length - uniqueKeywords.length,
           concurrency: CONCURRENCY_LIMIT,
         },
       }, startTime);
@@ -225,14 +306,15 @@ async function runBatchScraping(): Promise<{ success: boolean; processed: number
 async function main() {
   console.log('='.repeat(50));
   console.log('🕐 실행 시간:', new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' }));
+  console.log('🔧 크로스-유저 키워드 최적화 활성화');
   console.log('='.repeat(50));
 
   const result = await runBatchScraping();
 
   console.log('\n' + '='.repeat(50));
   console.log('📊 최종 결과:');
-  console.log(`   - 성공: ${result.processed}개`);
-  console.log(`   - 실패: ${result.failed}개`);
+  console.log(`   - 저장 성공: ${result.processed}개`);
+  console.log(`   - 저장 실패: ${result.failed}개`);
   console.log('='.repeat(50));
 
   // 실패가 있으면 exit code 1

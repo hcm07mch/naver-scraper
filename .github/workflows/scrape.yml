@@ -1,14 +1,25 @@
-name: Daily Scraping
+name: Daily Keyword Ranking Scraping
 
 on:
   schedule:
     # 매일 오후 2시 KST (UTC 05:00)
     - cron: '0 5 * * *'
   workflow_dispatch: # 수동 실행 가능
+    inputs:
+      debug_enabled:
+        type: boolean
+        description: '디버그 모드 활성화'
+        required: false
+        default: false
+
+env:
+  NODE_ENV: production
+  CI: true
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
+    timeout-minutes: 30  # 최대 30분 실행
     
     steps:
       - name: Checkout repository
@@ -20,11 +31,50 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
+      - name: Get Puppeteer Cache Dir
+        id: puppeteer-cache
+        run: echo "dir=$(npx puppeteer browsers path)" >> $GITHUB_OUTPUT
+
+      - name: Cache Puppeteer Browser
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.puppeteer-cache.outputs.dir }}
+          key: ${{ runner.os }}-puppeteer-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-puppeteer-
+
       - name: Install dependencies
         run: npm ci
 
+      - name: Install System Dependencies for Puppeteer
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libnss3 \
+            libatk1.0-0 \
+            libatk-bridge2.0-0 \
+            libcups2 \
+            libdrm2 \
+            libxkbcommon0 \
+            libxcomposite1 \
+            libxdamage1 \
+            libxfixes3 \
+            libxrandr2 \
+            libgbm1 \
+            libasound2
+
       - name: Run scraping
+        id: scrape
         run: npm run scrape
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          DEBUG: ${{ inputs.debug_enabled && 'true' || 'false' }}
+
+      - name: Job Summary
+        if: always()
+        run: |
+          echo "## 🎯 키워드 순위 스크래핑 결과" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **실행 시간**: $(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M:%S KST')" >> $GITHUB_STEP_SUMMARY
+          echo "- **상태**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY

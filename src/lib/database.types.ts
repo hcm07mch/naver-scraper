@@ -3,6 +3,19 @@
  * 실제 Supabase 프로젝트 스키마 기반
  */
 
+/**
+ * 순위 목록 내 개별 업체 정보 (JSONB 저장용)
+ */
+export interface RankingItemJson {
+  rank: number;
+  place_id: string;
+  name: string;
+  visitor_review_count?: number;
+  blog_review_count?: number;
+  category?: string;
+  href?: string;
+}
+
 export interface Database {
   public: {
     Tables: {
@@ -82,7 +95,7 @@ export interface Database {
       };
 
       /**
-       * 키워드 순위 이력 테이블
+       * 키워드 순위 이력 테이블 (뷰로 전환됨 - keyword_analysis_snapshots에서 추출)
        */
       keyword_ranking_history: {
         Row: {
@@ -114,6 +127,48 @@ export interface Database {
           exposure_rank?: number | null;
           visitor_review_count?: number;
           blog_review_count?: number;
+          metadata?: Record<string, any>;
+          created_at?: string;
+          updated_at?: string;
+        };
+      };
+
+      /**
+       * 키워드 분석 스냅샷 테이블 (전체 1~300위 데이터)
+       */
+      keyword_analysis_snapshots: {
+        Row: {
+          id: string;
+          user_id: string;
+          customer_keyword_id: string;
+          keyword: string;
+          measured_date: string;
+          total_results: number;
+          rankings: RankingItemJson[];
+          metadata: Record<string, any>;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          customer_keyword_id: string;
+          keyword: string;
+          measured_date: string;
+          total_results?: number;
+          rankings: RankingItemJson[];
+          metadata?: Record<string, any>;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          customer_keyword_id?: string;
+          keyword?: string;
+          measured_date?: string;
+          total_results?: number;
+          rankings?: RankingItemJson[];
           metadata?: Record<string, any>;
           created_at?: string;
           updated_at?: string;
@@ -217,6 +272,10 @@ export type ScrapingLogUpdate = Database['public']['Tables']['scraping_logs']['U
 
 export type CustomerKeywordWithLatestRanking = Database['public']['Views']['customer_keywords_with_latest_ranking']['Row'];
 
+export type KeywordAnalysisSnapshot = Database['public']['Tables']['keyword_analysis_snapshots']['Row'];
+export type KeywordAnalysisSnapshotInsert = Database['public']['Tables']['keyword_analysis_snapshots']['Insert'];
+export type KeywordAnalysisSnapshotUpdate = Database['public']['Tables']['keyword_analysis_snapshots']['Update'];
+
 /**
  * 스크래핑 대상 키워드 (customers + customer_keywords 조인 결과)
  */
@@ -227,4 +286,5 @@ export interface ScrapingTarget {
   placeId: string;          // customers.place_id
   clientName: string;       // customers.client_name
   businessType: string;     // customers.business_type
+  userId?: string;          // customers.user_id (추가)
 }

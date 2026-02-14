@@ -1,10 +1,10 @@
 # Scraping Lambda
 
-AWS Lambda 기반 네이버 플레이스 크롤링 서비스
+GitHub Actions 기반 네이버 플레이스 크롤링 서비스
 
 ## 📋 개요
 
-이 프로젝트는 네이버 플레이스 검색 결과를 크롤링하여 업체의 순위, 리뷰 수, 블로그 리뷰 수 등을 수집하는 AWS Lambda 함수입니다.
+이 프로젝트는 네이버 플레이스 검색 결과를 크롤링하여 업체의 순위, 리뷰 수, 블로그 리뷰 수 등을 수집합니다.
 
 **🕐 스케줄: 매일 오후 2시 (KST) 자동 실행**
 
@@ -16,8 +16,66 @@ AWS Lambda 기반 네이버 플레이스 크롤링 서비스
 - 블로그 리뷰 수 수집
 - 점진적 스크롤링 (100개 단위)
 - **병렬 처리** (동시 3개 브라우저)
-- Chromium 바이너리 캐싱으로 콜드 스타트 최적화
 - **Supabase 연동** (키워드 조회, 결과 저장)
+
+---
+
+## 🔧 GitHub Actions 설정 (권장)
+
+### 1단계: GitHub Repository Secrets 설정
+
+GitHub Repository의 Settings → Secrets and variables → Actions 에서 다음 시크릿을 추가합니다:
+
+| Secret Name | 설명 | 예시 |
+|-------------|------|------|
+| `SUPABASE_URL` | Supabase 프로젝트 URL | `https://xxxxx.supabase.co` |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase Service Role Key | `eyJhbG...` |
+
+### 2단계: Repository에 푸시
+
+```bash
+git add .
+git commit -m "feat: add github actions workflow"
+git push origin main
+```
+
+### 3단계: Actions 탭에서 확인
+
+Repository의 Actions 탭에서 workflow 실행 상태를 확인할 수 있습니다.
+
+### 수동 실행 방법
+
+1. Repository → Actions 탭 이동
+2. "Daily Keyword Ranking Scraping" workflow 선택
+3. "Run workflow" 버튼 클릭
+4. (선택) 디버그 모드 활성화
+5. "Run workflow" 실행
+
+### 스케줄 변경
+
+`.github/workflows/scrape.yml` 파일에서 cron 표현식 수정:
+
+```yaml
+on:
+  schedule:
+    - cron: '0 5 * * *'  # UTC 05:00 = KST 14:00
+```
+
+| 원하는 시간 (KST) | Cron 표현식 (UTC) |
+|-------------------|-------------------|
+| 오전 9시 | `0 0 * * *` |
+| 오후 2시 | `0 5 * * *` |
+| 오후 6시 | `0 9 * * *` |
+| 자정 | `0 15 * * *` |
+
+### GitHub Actions 로그 확인
+
+1. Repository → Actions 탭
+2. 실행된 workflow 클릭
+3. "scrape" job 클릭
+4. 각 step의 로그 확인
+
+---
 
 ## 📁 프로젝트 구조
 
