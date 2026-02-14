@@ -14,6 +14,8 @@ export interface RankingItemJson {
   blog_review_count?: number;
   category?: string;
   href?: string;
+  review_count?: number;       // 검색 결과의 대략 리뷰 수 (숫자로 변환)
+  review_count_raw?: string;   // 원본 문자열 (예: "2.2만")
 }
 
 export interface Database {

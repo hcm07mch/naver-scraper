@@ -284,6 +284,8 @@ export async function saveAnalysisSnapshot(
     blog_review_count: r.blog_review_count,
     category: r.category,
     href: r.href,
+    review_count: r.review_count,
+    review_count_raw: r.review_count_raw,
   }));
 
   // 오늘 이미 저장된 데이터가 있는지 확인

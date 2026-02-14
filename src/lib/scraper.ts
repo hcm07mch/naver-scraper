@@ -104,6 +104,21 @@ export async function scrapeKeywordRankings(
         return { success: false, rankings: [], targetRank: null };
       }
       
+      // 리뷰 수 파싱 함수 (예: "리뷰 2.2만" → 22000, "리뷰 3,537" → 3537)
+      const parseReviewCount = (text: string): { count: number; raw: string } | null => {
+        const match = text.match(/리뷰\s*([\d,.]+)(만)?/);
+        if (!match) return null;
+        
+        const rawValue = match[1] + (match[2] || '');
+        let count = parseFloat(match[1].replace(/,/g, ''));
+        
+        if (match[2] === '만') {
+          count = count * 10000;
+        }
+        
+        return { count: Math.round(count), raw: rawValue };
+      };
+
       // 현재 로드된 모든 업체 수집 함수
       const collectAllPlaces = () => {
         const newOpenSection = document.querySelector('.phKao.lLNP9');
@@ -123,6 +138,8 @@ export async function scrapeKeywordRankings(
           name: string;
           href: string;
           category?: string;
+          review_count?: number;
+          review_count_raw?: string;
         }> = [];
         
         let targetRank: number | null = null;
@@ -162,6 +179,10 @@ export async function scrapeKeywordRankings(
                 category = categoryEl.textContent?.trim();
               }
 
+              // 리뷰 수 파싱
+              const itemText = item.textContent || '';
+              const reviewData = parseReviewCount(itemText);
+
               const currentRank = results.length + 1;
               
               results.push({
@@ -170,6 +191,8 @@ export async function scrapeKeywordRankings(
                 name: (placeName || '').substring(0, 100).replace(/\s+/g, ' ').trim(),
                 href: href.startsWith('http') ? href : `https://m.place.naver.com${href}`,
                 category,
+                review_count: reviewData?.count,
+                review_count_raw: reviewData?.raw,
               });
 
               // 타겟 업체 순위 확인

@@ -37,6 +37,18 @@ export interface RankingItem {
   blog_review_count?: number;      // 블로그 리뷰 수 (상세 페이지에서만)
   category?: string;               // 카테고리
   href?: string;                   // 상세 페이지 URL
+  review_count?: number;           // 검색 결과의 대략 리뷰 수 (숫자로 변환)
+  review_count_raw?: string;       // 원본 문자열 (예: "2.2만")
+}
+
+/**
+ * 업체 상세 페이지 리뷰 수 정보
+ */
+export interface PlaceReviewDetail {
+  place_id: string;
+  visitor_review_count: number;    // 방문자 리뷰 수
+  blog_review_count: number;       // 블로그 리뷰 수
+  total_review_count: number;      // 총 리뷰 수
 }
 
 /**

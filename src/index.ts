@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { scrapeKeywordRankings } from './lib/scraper';
+import { scrapePlaceDetailReviews } from './lib/detail-review-scraper';
 import { 
   getActiveKeywords, 
   saveAnalysisSnapshot, 
@@ -9,7 +10,7 @@ import {
   getTodaySnapshotByKeyword
 } from './lib/keyword-service';
 import { ScrapingTarget } from './lib/database.types';
-import { FullRankingResult } from './lib/types';
+import { FullRankingResult, PlaceReviewDetail } from './lib/types';
 
 // 병렬 처리 설정
 const CONCURRENCY_LIMIT = 3; // 동시에 실행할 크롬 인스턴스 수
@@ -45,6 +46,7 @@ function groupByKeyword(targets: ScrapingTarget[]): Map<string, ScrapingTarget[]
 /**
  * 키워드 그룹 처리 (스냅샷 재사용 또는 새 스크래핑)
  * 다른 유저가 오늘 이미 스크래핑했으면 해당 데이터 재사용
+ * 타겟 업체들의 정확한 리뷰 수는 상세 페이지 방문하여 수집
  */
 async function processKeywordGroup(
   keyword: string,
@@ -102,28 +104,48 @@ async function processKeywordGroup(
       console.log(`📊 "${keyword}" 스크래핑 완료 - ${scrapingResult.totalResults}개 업체 수집`);
     }
 
-    // 3단계: 각 타겟별로 저장 (rankings에서 해당 업체 순위 추출)
+    // 3단계: 타겟 업체들의 상세 리뷰 수 수집
+    // - 순위권 내 + 순위권 밖 모든 타겟의 place_id 수집
+    const targetPlaceIds = targets
+      .map(t => t.placeId)
+      .filter((id): id is string => !!id);
+    
+    let detailReviews: Map<string, PlaceReviewDetail> = new Map();
+    
+    if (targetPlaceIds.length > 0) {
+      console.log(`📝 ${targetPlaceIds.length}개 타겟 업체 상세 리뷰 수집 중...`);
+      detailReviews = await scrapePlaceDetailReviews(targetPlaceIds);
+    }
+
+    // 4단계: 각 타겟별로 저장 (rankings에서 해당 업체 순위 추출 + 상세 리뷰 반영)
     for (const target of targets) {
       try {
         // rankings에서 해당 타겟의 place_id 찾기
         const targetRanking = scrapingResult.rankings.find(
           r => r.place_id === target.placeId
         );
+        
+        // 상세 페이지에서 수집한 리뷰 수
+        const detailReview = target.placeId ? detailReviews.get(target.placeId) : undefined;
 
         // 타겟별 맞춤 결과 생성
+        // 상세 리뷰 수가 있으면 그걸 사용, 없으면 rankings에서 가져온 대략 수치 또는 0
         const targetResult: FullRankingResult = {
           ...scrapingResult,
           targetPlaceRank: targetRanking?.rank,
-          targetPlaceReviewCount: targetRanking?.visitor_review_count,
-          targetPlaceBlogCount: targetRanking?.blog_review_count,
+          targetPlaceReviewCount: detailReview?.visitor_review_count ?? targetRanking?.visitor_review_count ?? 0,
+          targetPlaceBlogCount: detailReview?.blog_review_count ?? targetRanking?.blog_review_count ?? 0,
         };
 
         await saveAnalysisSnapshot(target, targetResult);
         await updateKeywordTimestamp(target.keywordId);
 
         const rankInfo = targetRanking ? `${targetRanking.rank}위` : '순위권 밖';
+        const reviewInfo = detailReview 
+          ? `(방문자: ${detailReview.visitor_review_count}, 블로그: ${detailReview.blog_review_count})`
+          : '';
         const reuseTag = reused ? ' (재사용)' : '';
-        console.log(`  ✅ ${target.clientName}: ${rankInfo}${reuseTag}`);
+        console.log(`  ✅ ${target.clientName}: ${rankInfo} ${reviewInfo}${reuseTag}`);
 
         savedCount++;
         results.push({
@@ -133,6 +155,8 @@ async function processKeywordGroup(
           placeId: target.placeId,
           success: true,
           rank: targetRanking?.rank,
+          visitorReviewCount: detailReview?.visitor_review_count,
+          blogReviewCount: detailReview?.blog_review_count,
           totalResults: scrapingResult.totalResults,
           reused,
         });
