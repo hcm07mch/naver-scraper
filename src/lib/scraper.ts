@@ -210,7 +210,7 @@ export async function scrapeKeywordRankings(
       // 300위까지 스크롤
       let previousCount = 0;
       let stableCount = 0;
-      const maxAttempts = 30;
+      const maxAttempts = 50;  // 더 많은 시도
       
       for (let i = 0; i < maxAttempts; i++) {
         const currentData = collectAllPlaces();
@@ -227,16 +227,32 @@ export async function scrapeKeywordRankings(
           };
         }
         
-        // 스크롤
+        // 마지막 아이템으로 스크롤 (더 확실한 방법)
+        const allListItems = document.querySelectorAll('ul > li.VLTHu');
+        if (allListItems.length > 0) {
+          allListItems[allListItems.length - 1].scrollIntoView({ behavior: 'smooth', block: 'end' });
+        }
+        
+        // 추가로 컨테이너 스크롤도 실행
         scrollContainer.scrollTop = scrollContainer.scrollHeight;
         
-        const waitTime = currentCount < 100 ? 800 : currentCount < 200 ? 1200 : 1500;
+        // 대기 시간 증가 (100개 경계에서 더 오래 대기)
+        let waitTime = 1500;
+        if (currentCount >= 95 && currentCount <= 105) {
+          waitTime = 2500;  // 100개 근처에서 더 오래 대기
+        } else if (currentCount >= 195 && currentCount <= 205) {
+          waitTime = 2500;  // 200개 근처에서 더 오래 대기
+        }
         await new Promise(resolve => setTimeout(resolve, waitTime));
         
         if (currentCount === previousCount) {
           stableCount++;
-          if (stableCount >= 3) {
-            console.log(`⚠️ ${currentCount}개에서 로딩 중단됨`);
+          // 100의 배수 근처에서는 더 기다려봄
+          const nearBoundary = currentCount % 100 >= 95 || currentCount % 100 <= 5;
+          const maxStable = nearBoundary ? 8 : 5;
+          
+          if (stableCount >= maxStable) {
+            console.log(`⚠️ ${currentCount}개에서 ${stableCount}회 연속 변화 없음. 로딩 중단.`);
             return { 
               success: true, 
               rankings: currentData.results,
