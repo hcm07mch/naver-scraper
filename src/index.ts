@@ -50,7 +50,8 @@ function groupByKeyword(targets: ScrapingTarget[]): Map<string, ScrapingTarget[]
  */
 async function processKeywordGroup(
   keyword: string,
-  targets: ScrapingTarget[]
+  targets: ScrapingTarget[],
+  sharedDetailReviews?: Map<string, PlaceReviewDetail>  // 청크 레벨에서 미리 수집된 상세 리뷰
 ): Promise<{
   keyword: string;
   success: boolean;
@@ -104,17 +105,19 @@ async function processKeywordGroup(
       console.log(`📊 "${keyword}" 스크래핑 완료 - ${scrapingResult.totalResults}개 업체 수집`);
     }
 
-    // 3단계: 타겟 업체들의 상세 리뷰 수 수집
-    // - 순위권 내 + 순위권 밖 모든 타겟의 place_id 수집
-    const targetPlaceIds = targets
-      .map(t => t.placeId)
-      .filter((id): id is string => !!id);
+    // 3단계: 타겟 업체들의 상세 리뷰 수 (청크 레벨에서 미리 수집된 것 사용)
+    let detailReviews: Map<string, PlaceReviewDetail> = sharedDetailReviews || new Map();
     
-    let detailReviews: Map<string, PlaceReviewDetail> = new Map();
-    
-    if (targetPlaceIds.length > 0) {
-      console.log(`📝 ${targetPlaceIds.length}개 타겟 업체 상세 리뷰 수집 중...`);
-      detailReviews = await scrapePlaceDetailReviews(targetPlaceIds);
+    // 공유 리뷰가 없으면 개별 수집 (fallback)
+    if (!sharedDetailReviews) {
+      const targetPlaceIds = targets
+        .map(t => t.placeId)
+        .filter((id): id is string => !!id);
+      
+      if (targetPlaceIds.length > 0) {
+        console.log(`📝 ${targetPlaceIds.length}개 타겟 업체 상세 리뷰 수집 중...`);
+        detailReviews = await scrapePlaceDetailReviews(targetPlaceIds);
+      }
     }
 
     // 4단계: 각 타겟별로 저장 (rankings에서 해당 업체 순위 추출 + 상세 리뷰 반영)
@@ -239,11 +242,29 @@ async function runBatchScraping(): Promise<{ success: boolean; processed: number
       const chunk = keywordChunks[i];
       console.log(`\n🔄 청크 ${i + 1}/${keywordChunks.length} 처리 중... (${chunk.length}개 키워드)`);
 
-      // 청크 내 키워드 그룹 병렬 처리
+      // 청크 내 모든 타겟 place_id 수집 (중복 제거)
+      const chunkPlaceIds = new Set<string>();
+      for (const keyword of chunk) {
+        const groupTargets = keywordGroups.get(keyword) || [];
+        for (const target of groupTargets) {
+          if (target.placeId) {
+            chunkPlaceIds.add(target.placeId);
+          }
+        }
+      }
+
+      // 청크 단위로 상세 리뷰 한 번에 수집
+      let sharedDetailReviews: Map<string, PlaceReviewDetail> = new Map();
+      if (chunkPlaceIds.size > 0) {
+        console.log(`📝 청크 내 ${chunkPlaceIds.size}개 업체 상세 리뷰 일괄 수집 중...`);
+        sharedDetailReviews = await scrapePlaceDetailReviews(Array.from(chunkPlaceIds));
+      }
+
+      // 청크 내 키워드 그룹 병렬 처리 (상세 리뷰 공유)
       const chunkResults = await Promise.all(
         chunk.map(keyword => {
           const groupTargets = keywordGroups.get(keyword) || [];
-          return processKeywordGroup(keyword, groupTargets);
+          return processKeywordGroup(keyword, groupTargets, sharedDetailReviews);
         })
       );
 
