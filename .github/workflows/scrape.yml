@@ -31,14 +31,10 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
-      - name: Get Puppeteer Cache Dir
-        id: puppeteer-cache
-        run: echo "dir=$(npx puppeteer browsers path)" >> $GITHUB_OUTPUT
-
       - name: Cache Puppeteer Browser
         uses: actions/cache@v4
         with:
-          path: ${{ steps.puppeteer-cache.outputs.dir }}
+          path: ~/.cache/puppeteer
           key: ${{ runner.os }}-puppeteer-${{ hashFiles('package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-puppeteer-
