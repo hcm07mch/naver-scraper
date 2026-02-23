@@ -280,13 +280,14 @@ export type KeywordAnalysisSnapshotUpdate = Database['public']['Tables']['keywor
 
 /**
  * 스크래핑 대상 키워드 (customers + customer_keywords 조인 결과)
+ * customer_id가 null인 키워드도 지원 (공용 키워드)
  */
 export interface ScrapingTarget {
   keywordId: string;        // customer_keywords.id
-  customerId: string;       // customers.id
+  customerId?: string | null;      // customers.id (null일 수 있음 - 공용 키워드)
   keyword: string;          // customer_keywords.keyword
-  placeId: string;          // customers.place_id
-  clientName: string;       // customers.client_name
-  businessType: string;     // customers.business_type
-  userId?: string;          // customers.user_id (추가)
+  placeId?: string | null;         // customers.place_id (null일 수 있음)
+  clientName?: string | null;      // customers.client_name (null일 수 있음)
+  businessType?: string | null;    // customers.business_type (null일 수 있음)
+  userId?: string | null;          // customers.user_id
 }

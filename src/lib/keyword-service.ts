@@ -25,14 +25,14 @@ export async function getActiveKeywords(): Promise<ScrapingTarget[]> {
   // 오늘 날짜 (YYYY-MM-DD)
   const today = new Date().toISOString().split('T')[0];
   
-  // customer_keywords와 customers 조인 쿼리
+  // customer_keywords와 customers 조인 쿼리 (left join으로 customer_id가 null인 키워드도 포함)
   const { data, error } = await supabase
     .from('customer_keywords')
     .select(`
       id,
       customer_id,
       keyword,
-      customers!inner (
+      customers (
         id,
         client_name,
         place_id,
@@ -42,7 +42,6 @@ export async function getActiveKeywords(): Promise<ScrapingTarget[]> {
     `)
     .eq('is_active', true)
     .is('deleted_at', null)
-    .not('customers.place_id', 'is', null)
     .order('created_at', { ascending: true });
 
   if (error) {
@@ -50,15 +49,15 @@ export async function getActiveKeywords(): Promise<ScrapingTarget[]> {
     throw new Error(`키워드 조회 실패: ${error.message}`);
   }
 
-  // 결과를 ScrapingTarget 형태로 변환
+  // 결과를 ScrapingTarget 형태로 변환 (customer_id가 null인 경우도 처리)
   const allTargets: ScrapingTarget[] = (data || []).map((item: any) => ({
     keywordId: item.id,
-    customerId: item.customer_id,
+    customerId: item.customer_id || null,
     keyword: item.keyword,
-    placeId: item.customers.place_id,
-    clientName: item.customers.client_name,
-    businessType: item.customers.business_type,
-    userId: item.customers.user_id,
+    placeId: item.customers?.place_id || null,
+    clientName: item.customers?.client_name || null,
+    businessType: item.customers?.business_type || null,
+    userId: item.customers?.user_id || null,
   }));
 
   console.log(`📊 전체 활성 키워드: ${allTargets.length}개`);
