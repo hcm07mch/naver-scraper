@@ -190,10 +190,10 @@ export async function getKeywordsByUserId(userId: string): Promise<ScrapingTarge
  */
 export interface ScrapingContext {
   keyword: string;
-  placeId: string;
-  clientName: string;
-  customerId?: string;
-  businessType?: string;
+  placeId?: string | null;
+  clientName?: string | null;
+  customerId?: string | null;
+  businessType?: string | null;
 }
 
 /**

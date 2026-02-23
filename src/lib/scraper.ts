@@ -67,7 +67,7 @@ async function setupPage(page: any) {
  */
 export async function scrapeKeywordRankings(
   keyword: string,
-  targetPlaceId?: string
+  targetPlaceId?: string | null
 ): Promise<FullRankingResult> {
   let browser;
   const today = new Date().toISOString().split('T')[0];

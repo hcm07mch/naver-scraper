@@ -126,35 +126,35 @@ GRANT SELECT ON customer_keywords_with_latest_ranking TO authenticated;
 -- 기존 keyword_ranking_history_backup 데이터를 
 -- keyword_analysis_snapshots로 변환하려면 아래 주석 해제
 -- ============================================
--- INSERT INTO keyword_analysis_snapshots (
---   user_id,
---   customer_keyword_id,
---   keyword,
---   measured_date,
---   total_results,
---   rankings,
---   metadata
--- )
--- SELECT 
---   c.user_id,
---   krh.customer_keyword_id,
---   ck.keyword,
---   krh.measured_date,
---   1, -- 기존 데이터는 단일 업체 정보만 있음
---   jsonb_build_array(
---     jsonb_build_object(
---       'rank', krh.exposure_rank,
---       'place_id', c.place_id,
---       'name', c.client_name,
---       'visitor_review_count', krh.visitor_review_count,
---       'blog_review_count', krh.blog_review_count
---     )
---   ),
---   krh.metadata
--- FROM keyword_ranking_history_backup krh
--- JOIN customer_keywords ck ON ck.id = krh.customer_keyword_id
--- JOIN customers c ON c.id = ck.customer_id
--- ON CONFLICT (customer_keyword_id, measured_date) DO NOTHING;
+INSERT INTO keyword_analysis_snapshots (
+  user_id,
+  customer_keyword_id,
+  keyword,
+  measured_date,
+  total_results,
+  rankings,
+  metadata
+)
+SELECT 
+  c.user_id,
+  krh.customer_keyword_id,
+  ck.keyword,
+  krh.measured_date,
+  1, -- 기존 데이터는 단일 업체 정보만 있음
+  jsonb_build_array(
+    jsonb_build_object(
+      'rank', krh.exposure_rank,
+      'place_id', c.place_id,
+      'name', c.client_name,
+      'visitor_review_count', krh.visitor_review_count,
+      'blog_review_count', krh.blog_review_count
+    )
+  ),
+  krh.metadata
+FROM keyword_ranking_history_backup krh
+JOIN customer_keywords ck ON ck.id = krh.customer_keyword_id
+JOIN customers c ON c.id = ck.customer_id
+ON CONFLICT (customer_keyword_id, measured_date) DO NOTHING;
 
 COMMIT;
 
@@ -162,10 +162,10 @@ COMMIT;
 -- 검증 쿼리 (마이그레이션 후 실행)
 -- ============================================
 -- 1. 뷰 테스트
--- SELECT * FROM keyword_ranking_history LIMIT 5;
--- SELECT * FROM customer_keywords_with_latest_ranking LIMIT 5;
+SELECT * FROM keyword_ranking_history LIMIT 5;
+SELECT * FROM customer_keywords_with_latest_ranking LIMIT 5;
 
 -- 2. 스냅샷 테이블 확인
--- SELECT id, keyword, measured_date, total_results, jsonb_array_length(rankings) as ranking_count 
--- FROM keyword_analysis_snapshots 
--- ORDER BY measured_date DESC LIMIT 10;
+SELECT id, keyword, measured_date, total_results, jsonb_array_length(rankings) as ranking_count 
+FROM keyword_analysis_snapshots 
+ORDER BY measured_date DESC LIMIT 10;

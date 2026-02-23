@@ -4,13 +4,13 @@
 
 export interface ScrapingRequest {
   keyword: string;
-  placeId?: string;
+  placeId?: string | null;
 }
 
 export interface ScrapingResult {
   success: boolean;
   keyword: string;
-  placeId?: string;
+  placeId?: string | null;
   rank?: number;
   reviewCount?: number;
   blogCount?: number;
