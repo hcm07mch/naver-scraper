@@ -77,7 +77,7 @@ async function processKeywordGroup(
     } else {
       // 2단계: 없으면 새로 스크래핑
       console.log(`🌐 "${keyword}" 새로 스크래핑 시작...`);
-      scrapingResult = await scrapeKeywordRankings(keyword, targets[0].placeId);
+      scrapingResult = await scrapeKeywordRankings(keyword, targets[0].placeId ?? undefined);
       
       if (!scrapingResult.success) {
         console.error(`❌ "${keyword}" 스크래핑 실패: ${scrapingResult.error}`);

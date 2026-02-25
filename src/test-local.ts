@@ -61,15 +61,15 @@ async function testBatchScraping() {
       try {
         const result = await scrapeNaverPlace({
           keyword: target.keyword,
-          placeId: target.placeId,
+          placeId: target.placeId ?? undefined,
         });
 
         await saveScrapingResult(target.keywordId, result, {
           keyword: target.keyword,
-          placeId: target.placeId,
-          clientName: target.clientName,
-          customerId: target.customerId,
-          businessType: target.businessType,
+          placeId: target.placeId ?? undefined,
+          clientName: target.clientName ?? undefined,
+          customerId: target.customerId ?? undefined,
+          businessType: target.businessType ?? undefined,
         });
 
         await updateKeywordTimestamp(target.keywordId);

@@ -65,34 +65,41 @@ export interface Database {
 
       /**
        * 고객별 키워드 테이블
+       * customer_id가 null인 경우 분석 전용 키워드 (user_id로 소유자 식별)
        */
       customer_keywords: {
         Row: {
           id: string;
-          customer_id: string;
+          customer_id: string | null;  // null인 경우 분석 전용 키워드
           keyword: string;
           is_active: boolean;
           created_at: string;
           updated_at: string;
           deleted_at: string | null;
+          user_id: string | null;  // 분석 전용 키워드의 소유자
+          is_main: boolean;
         };
         Insert: {
           id?: string;
-          customer_id: string;
+          customer_id?: string | null;
           keyword: string;
           is_active?: boolean;
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;
+          user_id?: string | null;
+          is_main?: boolean;
         };
         Update: {
           id?: string;
-          customer_id?: string;
+          customer_id?: string | null;
           keyword?: string;
           is_active?: boolean;
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;
+          user_id?: string | null;
+          is_main?: boolean;
         };
       };
 

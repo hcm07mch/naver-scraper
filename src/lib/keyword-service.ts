@@ -26,12 +26,14 @@ export async function getActiveKeywords(): Promise<ScrapingTarget[]> {
   const today = new Date().toISOString().split('T')[0];
   
   // customer_keywords와 customers 조인 쿼리 (left join으로 customer_id가 null인 키워드도 포함)
+  // user_id는 customer_keywords 테이블에 직접 있을 수도 있고, customers 테이블에서 가져올 수도 있음
   const { data, error } = await supabase
     .from('customer_keywords')
     .select(`
       id,
       customer_id,
       keyword,
+      user_id,
       customers (
         id,
         client_name,
@@ -50,6 +52,7 @@ export async function getActiveKeywords(): Promise<ScrapingTarget[]> {
   }
 
   // 결과를 ScrapingTarget 형태로 변환 (customer_id가 null인 경우도 처리)
+  // user_id는 customer_keywords 테이블의 값을 우선 사용, 없으면 customers 테이블에서 가져옴
   const allTargets: ScrapingTarget[] = (data || []).map((item: any) => ({
     keywordId: item.id,
     customerId: item.customer_id || null,
@@ -57,7 +60,7 @@ export async function getActiveKeywords(): Promise<ScrapingTarget[]> {
     placeId: item.customers?.place_id || null,
     clientName: item.customers?.client_name || null,
     businessType: item.customers?.business_type || null,
-    userId: item.customers?.user_id || null,
+    userId: item.user_id || item.customers?.user_id || null,
   }));
 
   console.log(`📊 전체 활성 키워드: ${allTargets.length}개`);
