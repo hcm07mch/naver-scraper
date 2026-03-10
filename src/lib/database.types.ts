@@ -143,6 +143,45 @@ export interface Database {
       };
 
       /**
+       * 고객 키워드 순위 테이블 (개별 업체 순위 기록)
+       */
+      customer_keyword_rankings: {
+        Row: {
+          id: string;
+          customer_keyword_id: string;
+          measured_date: string;
+          exposure_rank: number | null;
+          visitor_review_count: number;
+          blog_review_count: number;
+          metadata: Record<string, any>;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          customer_keyword_id: string;
+          measured_date: string;
+          exposure_rank?: number | null;
+          visitor_review_count?: number;
+          blog_review_count?: number;
+          metadata?: Record<string, any>;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          customer_keyword_id?: string;
+          measured_date?: string;
+          exposure_rank?: number | null;
+          visitor_review_count?: number;
+          blog_review_count?: number;
+          metadata?: Record<string, any>;
+          created_at?: string;
+          updated_at?: string;
+        };
+      };
+
+      /**
        * 키워드 분석 스냅샷 테이블 (전체 1~300위 데이터)
        */
       keyword_analysis_snapshots: {
@@ -284,6 +323,10 @@ export type CustomerKeywordWithLatestRanking = Database['public']['Views']['cust
 export type KeywordAnalysisSnapshot = Database['public']['Tables']['keyword_analysis_snapshots']['Row'];
 export type KeywordAnalysisSnapshotInsert = Database['public']['Tables']['keyword_analysis_snapshots']['Insert'];
 export type KeywordAnalysisSnapshotUpdate = Database['public']['Tables']['keyword_analysis_snapshots']['Update'];
+
+export type CustomerKeywordRanking = Database['public']['Tables']['customer_keyword_rankings']['Row'];
+export type CustomerKeywordRankingInsert = Database['public']['Tables']['customer_keyword_rankings']['Insert'];
+export type CustomerKeywordRankingUpdate = Database['public']['Tables']['customer_keyword_rankings']['Update'];
 
 /**
  * 스크래핑 대상 키워드 (customers + customer_keywords 조인 결과)

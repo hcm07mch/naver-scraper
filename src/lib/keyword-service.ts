@@ -7,6 +7,7 @@ import {
   ScrapingTarget, 
   KeywordRankingHistoryInsert,
   KeywordAnalysisSnapshotInsert,
+  CustomerKeywordRankingInsert,
   CustomerKeywordWithLatestRanking,
   RankingItemJson
 } from './database.types';
@@ -355,6 +356,100 @@ export async function saveAnalysisSnapshot(
     }
     
     console.log(`💾 스냅샷 저장 완료: ${target.keyword} (${result.totalResults}개 업체)`);
+  }
+
+  // customer_keyword_rankings에도 해당 업체의 순위 저장
+  await saveCustomerKeywordRanking(target, result);
+}
+
+/**
+ * customer_keyword_rankings 테이블에 개별 업체 순위 저장
+ * keyword_analysis_snapshots의 rankings에서 해당 업체의 순위를 추출하여 저장
+ */
+export async function saveCustomerKeywordRanking(
+  target: ScrapingTarget,
+  result: FullRankingResult
+): Promise<void> {
+  const supabase = getSupabaseClient();
+  
+  // placeId가 없으면 저장하지 않음
+  if (!target.placeId) {
+    console.log(`⏭️ placeId가 없어서 customer_keyword_rankings 저장 건너뜀: ${target.keyword}`);
+    return;
+  }
+
+  const today = result.measuredDate;
+  
+  // rankings에서 해당 업체의 순위 찾기
+  const targetRanking = result.rankings.find(r => r.place_id === target.placeId);
+  
+  // 순위 정보
+  const exposureRank = targetRanking?.rank || null;
+  const visitorReviewCount = targetRanking?.visitor_review_count || 0;
+  const blogReviewCount = targetRanking?.blog_review_count || 0;
+  
+  // 오늘 이미 저장된 데이터가 있는지 확인
+  const { data: existingData, error: checkError } = await supabase
+    .from('customer_keyword_rankings')
+    .select('id')
+    .eq('customer_keyword_id', target.keywordId)
+    .eq('measured_date', today)
+    .limit(1);
+
+  if (checkError) {
+    console.error('⚠️ customer_keyword_rankings 중복 체크 실패:', checkError.message);
+  }
+
+  const metadata = {
+    client_name: target.clientName,
+    customer_id: target.customerId,
+    place_id: target.placeId,
+    business_type: target.businessType,
+    total_results: result.totalResults,
+    found_in_rankings: !!targetRanking,
+    scraped_at: result.timestamp,
+  };
+
+  if (existingData && existingData.length > 0) {
+    // UPDATE: 기존 데이터 업데이트
+    const { error } = await supabase
+      .from('customer_keyword_rankings')
+      .update({
+        exposure_rank: exposureRank,
+        visitor_review_count: visitorReviewCount,
+        blog_review_count: blogReviewCount,
+        metadata,
+        updated_at: new Date().toISOString(),
+      } as any)
+      .eq('id', existingData[0].id);
+
+    if (error) {
+      console.error('❌ customer_keyword_rankings 업데이트 실패:', error.message);
+      // 에러 발생해도 메인 프로세스 계속 진행
+    } else {
+      console.log(`🔄 customer_keyword_rankings 업데이트: ${target.keyword} (순위: ${exposureRank || '미노출'})`);
+    }
+  } else {
+    // INSERT: 새 데이터 삽입
+    const insertData: CustomerKeywordRankingInsert = {
+      customer_keyword_id: target.keywordId,
+      measured_date: today,
+      exposure_rank: exposureRank,
+      visitor_review_count: visitorReviewCount,
+      blog_review_count: blogReviewCount,
+      metadata,
+    };
+
+    const { error } = await supabase
+      .from('customer_keyword_rankings')
+      .insert(insertData as any);
+
+    if (error) {
+      console.error('❌ customer_keyword_rankings 저장 실패:', error.message);
+      // 에러 발생해도 메인 프로세스 계속 진행
+    } else {
+      console.log(`💾 customer_keyword_rankings 저장: ${target.keyword} (순위: ${exposureRank || '미노출'})`);
+    }
   }
 }
 
