@@ -383,10 +383,15 @@ export async function saveCustomerKeywordRanking(
   // rankings에서 해당 업체의 순위 찾기
   const targetRanking = result.rankings.find(r => r.place_id === target.placeId);
   
-  // 순위 정보
+  // 순위 정보 (rankings에서 찾거나, 순위 밖이면 result에서 직접 가져옴)
   const exposureRank = targetRanking?.rank || null;
-  const visitorReviewCount = targetRanking?.visitor_review_count || 0;
-  const blogReviewCount = targetRanking?.blog_review_count || 0;
+  // 순위 밖 업체도 상세 페이지에서 수집한 리뷰수 사용
+  const visitorReviewCount = targetRanking?.visitor_review_count 
+    ?? result.targetPlaceReviewCount 
+    ?? 0;
+  const blogReviewCount = targetRanking?.blog_review_count 
+    ?? result.targetPlaceBlogCount 
+    ?? 0;
   
   // 오늘 이미 저장된 데이터가 있는지 확인
   const { data: existingData, error: checkError } = await supabase
