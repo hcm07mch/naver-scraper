@@ -277,12 +277,15 @@ export async function scrapeKeywordRankings(
 
     console.log(`📊 전체 ${rankingData.rankings.length}개 업체 수집 완료`);
     
-    // 타겟 업체가 있고 발견된 경우, 리뷰 수 수집
+    // 타겟 업체 리뷰 수 수집 (순위 여부와 관계없이)
     let targetReviewCount: number | undefined;
     let targetBlogCount: number | undefined;
 
-    if (targetPlaceId && rankingData.targetRank) {
-      console.log(`🏪 타겟 업체(${rankingData.targetRank}위) 상세 페이지 이동 중...`);
+    if (targetPlaceId) {
+      const rankStatus = rankingData.targetRank 
+        ? `${rankingData.targetRank}위` 
+        : '순위 밖';
+      console.log(`🏪 타겟 업체(${rankStatus}) 상세 페이지 이동 중...`);
       
       const detailUrl = `https://m.place.naver.com/place/${targetPlaceId}/home`;
       await page.goto(detailUrl, {
@@ -424,16 +427,19 @@ export async function scrapeNaverPlace(
     };
   }
 
-  // 순위권 밖
+  // 순위권 밖이지만 리뷰 정보는 반환
   if (!result.targetPlaceRank) {
     return {
-      success: false,
+      success: true,  // 리뷰 수집은 성공
       keyword,
       placeId,
-      rank: undefined,
-      reviewCount: undefined,
+      rank: undefined,  // 순위 없음 (300위 밖)
+      reviewCount: result.targetPlaceReviewCount,
+      blogCount: result.targetPlaceBlogCount,
       timestamp: result.timestamp,
-      error: '순위권 밖 (검색 결과 300위 이하)',
+      error: result.targetPlaceReviewCount !== undefined 
+        ? undefined 
+        : '순위권 밖 (검색 결과 300위 이하)',
     };
   }
 
