@@ -3,6 +3,40 @@ import type { ScrapingRequest, ScrapingResult, FullRankingResult, RankingItem } 
 // 환경 감지: 로컬 개발 환경인지 확인 (CI 환경은 headless로 실행)
 const isLocalDev = !process.env.CI && !process.env.GITHUB_ACTIONS;
 
+// 재시도 설정
+const MAX_RETRY_COUNT = 3;
+const RETRY_DELAY_MS = 2000;
+const INVALID_NAME_THRESHOLD = 0.1; // 10% 이상 누락 시 재시도
+
+/**
+ * 스크래핑 결과 검증
+ * @returns 유효하면 true, 재시도 필요하면 false
+ */
+function validateScrapingResult(rankings: any[]): { valid: boolean; invalidCount: number; reason?: string } {
+  if (!rankings || rankings.length === 0) {
+    return { valid: false, invalidCount: 0, reason: '결과가 0건' };
+  }
+  
+  // place_name이 '알 수 없음'이거나 비어있는 항목 카운트
+  const invalidCount = rankings.filter(r => 
+    !r.place_name || 
+    r.place_name.trim() === '' || 
+    r.place_name === '알 수 없음'
+  ).length;
+  
+  const invalidRatio = invalidCount / rankings.length;
+  
+  if (invalidRatio >= INVALID_NAME_THRESHOLD) {
+    return { 
+      valid: false, 
+      invalidCount,
+      reason: `업체명 누락률 ${(invalidRatio * 100).toFixed(1)}% (${invalidCount}/${rankings.length})`
+    };
+  }
+  
+  return { valid: true, invalidCount };
+}
+
 /**
  * 브라우저 인스턴스 생성 (공통)
  */
@@ -63,9 +97,66 @@ async function setupPage(page: any) {
 
 /**
  * 키워드 전체 순위 수집 (1~300위) + 타겟 업체 리뷰 수
- * 통합 스크래핑 함수
+ * 통합 스크래핑 함수 (검증 실패 시 자동 재시도)
  */
 export async function scrapeKeywordRankings(
+  keyword: string,
+  targetPlaceId?: string | null
+): Promise<FullRankingResult> {
+  const today = new Date().toISOString().split('T')[0];
+  let lastResult: FullRankingResult | null = null;
+  let lastValidation: { valid: boolean; invalidCount: number; reason?: string } | null = null;
+
+  for (let attempt = 1; attempt <= MAX_RETRY_COUNT; attempt++) {
+    if (attempt > 1) {
+      console.log(`🔄 재시도 ${attempt}/${MAX_RETRY_COUNT} (사유: ${lastValidation?.reason})`);
+      await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+    }
+
+    const result = await scrapeKeywordRankingsOnce(keyword, targetPlaceId);
+    lastResult = result;
+
+    if (!result.success) {
+      console.log(`⚠️ 스크래핑 실패, 재시도 예정...`);
+      continue;
+    }
+
+    // 결과 검증
+    const validation = validateScrapingResult(result.rankings);
+    lastValidation = validation;
+
+    if (validation.valid) {
+      if (validation.invalidCount > 0) {
+        console.log(`✅ 검증 통과 (일부 누락: ${validation.invalidCount}건, 허용 범위 내)`);
+      } else {
+        console.log(`✅ 검증 통과 - 모든 업체명 정상 수집`);
+      }
+      return result;
+    }
+
+    console.log(`⚠️ 검증 실패: ${validation.reason}`);
+    
+    if (attempt === MAX_RETRY_COUNT) {
+      console.log(`❌ 최대 재시도 횟수(${MAX_RETRY_COUNT}) 도달, 마지막 결과 반환`);
+    }
+  }
+
+  // 모든 재시도 실패 시 마지막 결과 반환
+  return lastResult || {
+    success: false,
+    keyword,
+    measuredDate: today,
+    totalResults: 0,
+    rankings: [],
+    timestamp: new Date().toISOString(),
+    error: '모든 재시도 실패',
+  };
+}
+
+/**
+ * 단일 스크래핑 시도 (내부 함수)
+ */
+async function scrapeKeywordRankingsOnce(
   keyword: string,
   targetPlaceId?: string | null
 ): Promise<FullRankingResult> {
