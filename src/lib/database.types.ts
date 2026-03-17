@@ -9,7 +9,7 @@
 export interface RankingItemJson {
   rank: number;
   place_id: string;
-  name: string;
+  place_name: string;
   visitor_review_count?: number;
   blog_review_count?: number;
   category?: string;

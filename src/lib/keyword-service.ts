@@ -129,7 +129,7 @@ export async function getTodaySnapshotByKeyword(keyword: string): Promise<FullRa
   const rankings: RankingItem[] = (snapshot.rankings || []).map((r: RankingItemJson) => ({
     rank: r.rank,
     place_id: r.place_id,
-    name: r.name,
+    place_name: r.place_name,
     visitor_review_count: r.visitor_review_count,
     blog_review_count: r.blog_review_count,
     category: r.category,
@@ -282,7 +282,7 @@ export async function saveAnalysisSnapshot(
   const rankingsJson: RankingItemJson[] = result.rankings.map(r => ({
     rank: r.rank,
     place_id: r.place_id,
-    name: r.name,
+    place_name: r.place_name,
     visitor_review_count: r.visitor_review_count,
     blog_review_count: r.blog_review_count,
     category: r.category,

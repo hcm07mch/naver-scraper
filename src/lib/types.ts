@@ -32,7 +32,7 @@ export interface NaverPlaceItem {
 export interface RankingItem {
   rank: number;                    // 순위 (1~300)
   place_id: string;                // 네이버 플레이스 ID
-  name: string;                    // 업체명
+  place_name: string;              // 업체명
   visitor_review_count?: number;   // 방문자 리뷰 수 (상세 페이지에서만)
   blog_review_count?: number;      // 블로그 리뷰 수 (상세 페이지에서만)
   category?: string;               // 카테고리

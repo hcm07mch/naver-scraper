@@ -135,7 +135,7 @@ export async function scrapeKeywordRankings(
         const results: Array<{
           rank: number;
           place_id: string;
-          name: string;
+          place_name: string;
           href: string;
           category?: string;
           review_count?: number;
@@ -152,10 +152,34 @@ export async function scrapeKeywordRankings(
           
           if (isAd) continue;
           
-          const link = item.querySelector('a');
+          // 사진 카드 UI 대응: /photo가 없는 업체 상세 링크 우선 선택
+          const allLinks = item.querySelectorAll('a[href*="/place/"]');
+          let link: Element | null = null;
+          let bestHref = '';
+          
+          for (const a of Array.from(allLinks)) {
+            const href = a.getAttribute('href') || '';
+            // /photo, /review 등이 없는 순수 상세페이지 링크 우선
+            if (href.match(/\/place\/\d+(\?|$)/) || href.match(/\/place\/\d+\/home/)) {
+              link = a;
+              bestHref = href;
+              break;
+            }
+            // 첫 번째 place 링크 백업
+            if (!link && href.includes('/place/')) {
+              link = a;
+              bestHref = href;
+            }
+          }
+          
+          // fallback: 기존 방식
+          if (!link) {
+            link = item.querySelector('a');
+            bestHref = link?.getAttribute('href') || '';
+          }
           
           if (link) {
-            const href = link.getAttribute('href') || '';
+            const href = bestHref;
             const regex = /\/(place)\/(\d+)/;
             const match = href.match(regex);
             
@@ -163,13 +187,89 @@ export async function scrapeKeywordRankings(
               const placeId = match[2];
               let placeName: string | null = null;
               
+              // 1. 기존 선택자 시도
               const ywYLLInItem = item.querySelector('.YwYLL');
               if (ywYLLInItem) {
                 placeName = ywYLLInItem.textContent?.trim() || null;
               }
               
+              // 2. 대체 선택자들 시도 (네이버 UI 변경 대응 + 사진 카드 UI)
               if (!placeName) {
-                placeName = item.textContent?.trim().split('\n')[0] || '알 수 없음';
+                const nameSelectors = [
+                  '.place_bluelink',          // 일반 목록
+                  '.oVW7l',                   // 사진 카드 UI 업체명
+                  '.TYaxT',                   // 일부 키워드
+                  '.CHC5F',                   // 업체명 대체 클래스
+                  'a[class*="name"]',
+                  'span[class*="name"]',
+                  '.t3Ji3',                   // 카드형 업체명
+                  '[class*="title"]',         // title 포함 클래스
+                  'a > span:first-child',
+                  '.laII9 span',              // 사진 카드 내 업체명
+                ];
+                for (const sel of nameSelectors) {
+                  const el = item.querySelector(sel);
+                  if (el) {
+                    const text = el.textContent?.trim();
+                    if (text && text.length > 0 && text.length < 100 && !text.includes('리뷰')) {
+                      placeName = text;
+                      break;
+                    }
+                  }
+                }
+              }
+              
+              // 3. 이미지 alt 속성에서 업체명 추출 시도 (사진 카드)
+              if (!placeName) {
+                const img = item.querySelector('img');
+                if (img) {
+                  const alt = img.getAttribute('alt')?.trim();
+                  if (alt && alt.length > 0 && alt.length < 100 && !alt.includes('사진') && !alt.includes('이미지')) {
+                    placeName = alt;
+                  }
+                }
+              }
+              
+              // 4. 모든 링크 텍스트에서 추출 시도
+              if (!placeName) {
+                const allAnchors = item.querySelectorAll('a');
+                for (const a of Array.from(allAnchors)) {
+                  const aHref = a.getAttribute('href') || '';
+                  // 업체 상세 페이지 링크의 텍스트만 확인 (photo, review 제외)
+                  if (aHref.includes('/place/') && !aHref.includes('/photo') && !aHref.includes('/review')) {
+                    const aText = a.textContent?.trim();
+                    if (aText && aText.length > 1 && aText.length < 100) {
+                      placeName = aText.split('\n')[0]?.trim() || null;
+                      if (placeName) break;
+                    }
+                  }
+                }
+              }
+              
+              // 5. 최종 fallback - 전체 텍스트에서 추출
+              if (!placeName) {
+                const itemText = item.textContent?.trim();
+                const lines = itemText?.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+                if (lines && lines.length > 0) {
+                  const validName = lines.find(l => 
+                    !l.includes('광고') && 
+                    !l.includes('AD') &&
+                    !l.includes('리뷰') &&
+                    !l.includes('사진') &&
+                    !l.includes('m') &&  // 거리 정보 제외
+                    l.length > 1 && 
+                    l.length < 50
+                  );
+                  placeName = validName || '알 수 없음';
+                } else {
+                  placeName = '알 수 없음';
+                }
+              }
+              
+              // 6. 빈 문자열 방지
+              if (!placeName || placeName.trim().length === 0) {
+                placeName = '알 수 없음';
+                console.warn(`⚠️ 업체명 수집 실패 - place_id: ${placeId}`);
               }
 
               // 카테고리 추출 시도
@@ -185,11 +285,20 @@ export async function scrapeKeywordRankings(
 
               const currentRank = results.length + 1;
               
+              // href 정규화: /photo, /review 등 제거하고 기본 상세 페이지 URL로
+              let normalizedHref = href;
+              if (href.includes('/place/')) {
+                // /place/{id}/photo?... → /place/{id}
+                normalizedHref = href.replace(/\/place\/(\d+)\/[^?]*/, '/place/$1');
+                // 쿼리스트링 제거 (entry, bk_query 등)
+                normalizedHref = normalizedHref.split('?')[0];
+              }
+              
               results.push({
                 rank: currentRank,
                 place_id: placeId,
-                name: (placeName || '').substring(0, 100).replace(/\s+/g, ' ').trim(),
-                href: href.startsWith('http') ? href : `https://m.place.naver.com${href}`,
+                place_name: (placeName || '').substring(0, 100).replace(/\s+/g, ' ').trim(),
+                href: normalizedHref.startsWith('http') ? normalizedHref : `https://m.place.naver.com${normalizedHref}`,
                 category,
                 review_count: reviewData?.count,
                 review_count_raw: reviewData?.raw,
